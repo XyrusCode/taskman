@@ -21,9 +21,19 @@ pub struct Task {
 pub struct ProcessEntry {
     pub pid: u32,
     pub name: String,
+    pub cmdline: String,
+    pub exe: String,
     pub cpu_percent: f32,
     pub mem_bytes: u64,
     pub status: String,
+    pub group: ProcessGroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ProcessGroup {
+    Application,
+    #[default]
+    Background,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

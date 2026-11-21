@@ -1,7 +1,7 @@
 use crate::app::{App, SortBy, View};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -75,38 +75,39 @@ fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_processes(f: &mut Frame, app: &App, area: Rect) {
-    let header = ["PID", "NAME", "CPU%", "MEM", "STATUS"];
-    let rows: Vec<Row> = app
+    let app_count = app
         .processes
         .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let selected = i == app.proc_selected;
-            let style = if selected {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            let mem_mb = p.mem_bytes / 1_048_576;
-            Row::new([
-                Cell::from(p.pid.to_string()).style(style),
-                Cell::from(p.name.clone()).style(style),
-                Cell::from(format!("{:.1}", p.cpu_percent)).style(style),
-                Cell::from(format!("{} MB", mem_mb)).style(style),
-                Cell::from(p.status.clone()).style(style),
-            ])
-        })
-        .collect();
+        .filter(|p| p.group == crate::model::ProcessGroup::Application)
+        .count();
 
-    let widths = [
-        Constraint::Length(6),
-        Constraint::Length(24),
-        Constraint::Length(6),
-        Constraint::Length(10),
-        Constraint::Length(12),
-    ];
+    // Build a single list with group headers inserted on group transition.
+    // proc_to_display maps process index (in app.processes) -> display index.
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut proc_to_display: Vec<usize> = Vec::with_capacity(app.processes.len());
+
+    let header_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+
+    let mut last_group: Option<crate::model::ProcessGroup> = None;
+    for (i, p) in app.processes.iter().enumerate() {
+        if last_group != Some(p.group) {
+            let label = match p.group {
+                crate::model::ProcessGroup::Application => "Applications",
+                crate::model::ProcessGroup::Background => "Background",
+            };
+            items.push(
+                ListItem::new(format!("{} ({})", label, section_count(app, p.group)))
+                    .style(header_style),
+            );
+            last_group = Some(p.group);
+        }
+        proc_to_display.push(items.len());
+        items.push(process_row(p, i == app.proc_selected));
+    }
+
+    let selected_display = proc_to_display.get(app.proc_selected).copied();
 
     let sort_label = match app.sort_by {
         SortBy::Cpu => "CPU",
@@ -114,18 +115,53 @@ fn draw_processes(f: &mut Frame, app: &App, area: Rect) {
         SortBy::Name => "NAME",
     };
 
-    let table = Table::new(rows, widths)
-        .header(
-            Row::new(header.iter().map(|h| Cell::from(*h)))
-                .style(Style::default().add_modifier(Modifier::BOLD)),
+    let list = List::new(items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
         )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("Processes (sort: {})", sort_label)),
-        );
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Processes ({} total, {} apps) | sort: {}",
+            app.processes.len(),
+            app_count,
+            sort_label
+        )));
 
-    f.render_widget(table, area);
+    let mut state = ListState::default();
+    state.select(selected_display);
+    f.render_stateful_widget(list, area, &mut state);
+}
+
+/// Count processes of a given group.
+fn section_count(app: &App, group: crate::model::ProcessGroup) -> usize {
+    app.processes.iter().filter(|p| p.group == group).count()
+}
+
+fn process_row<'a>(p: &'a crate::model::ProcessEntry, selected: bool) -> ListItem<'a> {
+    let style = if selected {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let group_mark = if p.group == crate::model::ProcessGroup::Application {
+        "●"
+    } else {
+        "○"
+    };
+    let mem_mb = p.mem_bytes / 1_048_576;
+    let cmd = if p.cmdline.len() > 38 {
+        format!("{}…", &p.cmdline[..38])
+    } else {
+        p.cmdline.clone()
+    };
+    ListItem::new(format!(
+        "{} {:>5} {:<22} {:<40} {:>5.1} {:>6} MB",
+        group_mark, p.pid, p.name, cmd, p.cpu_percent, mem_mb
+    ))
+    .style(style)
 }
 
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
@@ -149,13 +185,13 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let text = match app.view {
         View::Tasks => format!(
-            "Tasks: {} ({} done)  |  v0.1.0  |  {}",
+            "Tasks: {} ({} done)  |  v0.3.0  |  {}",
             app.data.tasks.len(),
             app.data.tasks.iter().filter(|t| t.completed).count(),
             app.status
         ),
         View::Processes => format!(
-            "Processes: {}  |  v0.1.0  |  {}",
+            "Processes: {}  |  v0.3.0  |  {}",
             app.processes.len(),
             app.status
         ),

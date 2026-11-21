@@ -13,6 +13,11 @@ allocation accounted for, skip work the user can't see).
 
 - **Task list**: add, complete, delete to-do items (persisted to JSON)
 - **Process monitor**: list processes with PID, name, CPU%, memory, status
+- **Process grouping**: Applications vs Background sections (like TMOG) — user
+  sessions such as `ai.opencode` stand out from kernel threads and daemons
+- **Command-line visibility**: each process shows its cmdline, so you can tell
+  which process is your opencode session vs a system daemon
+- **● / ○ markers**: ● = Application, ○ = Background, on every row
 - **Sort**: cycle between CPU / memory / name sorting
 - **Kill**: terminate a selected process
 - **History capture**: rolling snapshots of process stats (last 60 samples)

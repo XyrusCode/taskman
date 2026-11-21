@@ -1,4 +1,4 @@
-use crate::model::{AppData, ProcessEntry, ProcessSnapshot, Task};
+use crate::model::{AppData, ProcessEntry, ProcessGroup, ProcessSnapshot, Task};
 use crate::storage::{load, save};
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -119,33 +119,142 @@ impl App {
 
     // ---- Processes ----
 
+    /// Classify a process as an Application (user-facing) or Background (system).
+    /// Mirrors TMOG's Applications / Background split so user sessions like
+    /// `ai.opencode` stand out from kernel threads and daemons.
+    fn classify_group(name: &str, cmdline: &str, exe: &str) -> ProcessGroup {
+        let lower = name.to_lowercase();
+        let cmd_lower = cmdline.to_lowercase();
+        let exe_lower = exe.to_lowercase();
+
+        // Kernel threads and obvious system daemons are always background.
+        let background_markers = [
+            "kthreadd",
+            "ksoftirqd",
+            "migration",
+            "rcu",
+            "watchdog",
+            "systemd",
+            "dbus",
+            "udisks",
+            "accounts",
+            "polkit",
+            "chrony",
+            "irqbalance",
+            "vmstat",
+            "snapd",
+        ];
+        if background_markers
+            .iter()
+            .any(|m| lower.contains(m) || cmd_lower.contains(m))
+        {
+            return ProcessGroup::Background;
+        }
+
+        // User-facing markers: GUI apps, terminals, editors, browsers, dev tools.
+        let app_markers = [
+            "code",
+            "opencode",
+            "ai.opencode",
+            "vim",
+            "nvim",
+            "emacs",
+            "nano",
+            "firefox",
+            "chrome",
+            "chromium",
+            "gnome-terminal",
+            "konsole",
+            "kitty",
+            "alacritty",
+            "wezterm",
+            "tilix",
+            "nautilus",
+            "dolphin",
+            "thunderbird",
+            "spotify",
+            "discord",
+            "telegram",
+        ];
+        if app_markers
+            .iter()
+            .any(|m| lower.contains(m) || cmd_lower.contains(m) || exe_lower.contains(m))
+        {
+            return ProcessGroup::Application;
+        }
+
+        // Processes owned by the current user with a non-trivial cmdline are
+        // likely user-launched applications.
+        if !cmdline.is_empty() && !lower.starts_with('[') {
+            return ProcessGroup::Application;
+        }
+
+        ProcessGroup::Background
+    }
+
+    fn cmdline_str(proc: &sysinfo::Process) -> String {
+        proc.cmd()
+            .iter()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn exe_str(proc: &sysinfo::Process) -> String {
+        proc.exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    }
+
     pub fn refresh_processes(&mut self) -> std::io::Result<()> {
         self.sys
             .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-        let mut entries: Vec<ProcessEntry> = self
+        let entries: Vec<ProcessEntry> = self
             .sys
             .processes()
             .iter()
-            .map(|(pid, proc)| ProcessEntry {
-                pid: pid.as_u32(),
-                name: proc.name().to_string_lossy().to_string(),
-                cpu_percent: proc.cpu_usage(),
-                mem_bytes: proc.memory(),
-                status: format!("{:?}", proc.status()),
+            .map(|(pid, proc)| {
+                let cmdline = Self::cmdline_str(proc);
+                let exe = Self::exe_str(proc);
+                let group =
+                    Self::classify_group(proc.name().to_string_lossy().as_ref(), &cmdline, &exe);
+                ProcessEntry {
+                    pid: pid.as_u32(),
+                    name: proc.name().to_string_lossy().to_string(),
+                    cmdline,
+                    exe,
+                    cpu_percent: proc.cpu_usage(),
+                    mem_bytes: proc.memory(),
+                    status: format!("{:?}", proc.status()),
+                    group,
+                }
             })
             .collect();
 
-        match self.sort_by {
-            SortBy::Cpu => entries.sort_by(|a, b| {
+        // Split into groups, sort each, then concatenate apps-first for display.
+        let mut apps: Vec<ProcessEntry> = Vec::new();
+        let mut background: Vec<ProcessEntry> = Vec::new();
+        for e in entries {
+            match e.group {
+                ProcessGroup::Application => apps.push(e),
+                ProcessGroup::Background => background.push(e),
+            }
+        }
+        let sort = |v: &mut Vec<ProcessEntry>| match self.sort_by {
+            SortBy::Cpu => v.sort_by(|a, b| {
                 b.cpu_percent
                     .partial_cmp(&a.cpu_percent)
                     .unwrap_or(std::cmp::Ordering::Equal)
             }),
-            SortBy::Mem => entries.sort_by_key(|a| std::cmp::Reverse(a.mem_bytes)),
-            SortBy::Name => entries.sort_by(|a, b| a.name.cmp(&b.name)),
-        }
+            SortBy::Mem => v.sort_by_key(|a| std::cmp::Reverse(a.mem_bytes)),
+            SortBy::Name => v.sort_by(|a, b| a.name.cmp(&b.name)),
+        };
+        sort(&mut apps);
+        sort(&mut background);
 
-        self.processes = entries;
+        // Applications first, then background — matches TMOG's grouping.
+        self.processes = apps;
+        self.processes.append(&mut background);
 
         // Keep a rolling snapshot history (cap at 60 samples ~ 1 minute at 1s ticks).
         let snapshot = ProcessSnapshot {
