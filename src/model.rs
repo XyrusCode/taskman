@@ -73,3 +73,43 @@ impl AppData {
         self.tasks.len() != len
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_task_increments_id() {
+        let mut data = AppData::default();
+        data.add_task("first".to_string());
+        data.add_task("second".to_string());
+        assert_eq!(data.tasks.len(), 2);
+        assert_eq!(data.tasks[0].id, 0);
+        assert_eq!(data.tasks[1].id, 1);
+        assert_eq!(data.next_task_id, 2);
+    }
+
+    #[test]
+    fn toggle_complete_flips() {
+        let mut data = AppData::default();
+        data.add_task("t".to_string());
+        assert!(!data.tasks[0].completed);
+        data.toggle_complete(0);
+        assert!(data.tasks[0].completed);
+        assert!(data.tasks[0].completed_at.is_some());
+        data.toggle_complete(0);
+        assert!(!data.tasks[0].completed);
+        assert!(data.tasks[0].completed_at.is_none());
+    }
+
+    #[test]
+    fn delete_task_removes() {
+        let mut data = AppData::default();
+        data.add_task("a".to_string());
+        data.add_task("b".to_string());
+        assert!(data.delete_task(0));
+        assert_eq!(data.tasks.len(), 1);
+        assert_eq!(data.tasks[0].id, 1);
+        assert!(!data.delete_task(999));
+    }
+}
