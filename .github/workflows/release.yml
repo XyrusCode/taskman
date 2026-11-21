@@ -102,10 +102,9 @@ jobs:
 
   mirror:
     needs: [release, check]
-    # Mirror whatever the release job actually produced, even when the release leg
-    # is skipped due to idempotency (always() ensures the mirror runs when check
-    # says release=true).
-    if: always() && needs.check.outputs.release == 'true'
+    # Mirror to Cloudflare R2 only if the secret is configured in this repo.
+    # New repos won't have CLOUDFLARE_API_TOKEN yet; skip gracefully.
+    if: always() && needs.check.outputs.release == 'true' && secrets.CLOUDFLARE_API_TOKEN != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
