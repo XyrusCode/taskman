@@ -93,7 +93,6 @@ jobs:
           version="${{ needs.check.outputs.version }}"
           gh release create "v$version" \
             --repo "$GITHUB_REPOSITORY" \
-            --name "taskman v$version" \
             --title "taskman v$version" \
             --body "${{ steps.notes.outputs.body }}" \
             --target main \
