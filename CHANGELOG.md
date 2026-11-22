@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0]
+- TMOG-style views: Summary, CPU, Processes (1/2/3, Tab to cycle)
+- Summary: CPU, MEM, SWAP gauges + load avg, process count, uptime, tasks
+- CPU: overall sparkline + per-core sparklines (up to 4 shown, 2-col after)
+- d/x delete on Summary (like the original Processes behavior)
+
 ## [0.3.0]
 - Process grouping: Applications vs Background (like TMOG)
 - Show cmdline + exe per process so sessions like `ai.opencode` are identifiable

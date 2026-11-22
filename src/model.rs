@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const CPU_HISTORY_LEN: usize = 60; // 60 samples ~ 1 minute at 1s ticks
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -34,6 +37,64 @@ pub enum ProcessGroup {
     Application,
     #[default]
     Background,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SystemStats {
+    pub cpu_percent: f32,
+    pub cpu_per_core: Vec<f32>,
+    pub mem_used: u64,
+    pub mem_total: u64,
+    pub swap_used: u64,
+    pub swap_total: u64,
+    pub load_1m: f64,
+    pub load_5m: f64,
+    pub load_15m: f64,
+    pub process_count: usize,
+    pub uptime_secs: u64,
+    pub cpu_history: VecDeque<f32>,
+    #[serde(skip)]
+    pub per_core_history: Vec<VecDeque<f32>>,
+}
+
+impl SystemStats {
+    pub fn new(core_count: usize) -> Self {
+        Self {
+            per_core_history: vec![VecDeque::new(); core_count],
+            ..Default::default()
+        }
+    }
+
+    pub fn mem_percent(&self) -> f32 {
+        if self.mem_total == 0 {
+            0.0
+        } else {
+            (self.mem_used as f32 / self.mem_total as f32) * 100.0
+        }
+    }
+
+    pub fn swap_percent(&self) -> f32 {
+        if self.swap_total == 0 {
+            0.0
+        } else {
+            (self.swap_used as f32 / self.swap_total as f32) * 100.0
+        }
+    }
+
+    pub fn format_uptime(&self) -> String {
+        let total = self.uptime_secs;
+        let h = total / 3600;
+        let m = (total % 3600) / 60;
+        let s = total % 60;
+        format!("{:02}:{:02}:{:02}", h, m, s)
+    }
+
+    pub fn format_load(&self) -> String {
+        format!(
+            "{:.2} {:.2} {:.2}",
+            self.load_1m, self.load_5m, self.load_15m
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,5 +182,20 @@ mod tests {
         assert_eq!(data.tasks.len(), 1);
         assert_eq!(data.tasks[0].id, 1);
         assert!(!data.delete_task(999));
+    }
+
+    #[test]
+    fn mem_percent_handles_zero_total() {
+        let stats = SystemStats::default();
+        assert_eq!(stats.mem_percent(), 0.0);
+    }
+
+    #[test]
+    fn format_uptime_pads() {
+        let stats = SystemStats {
+            uptime_secs: 5,
+            ..Default::default()
+        };
+        assert_eq!(stats.format_uptime(), "00:00:05");
     }
 }

@@ -1,7 +1,7 @@
 use crate::app::{App, SortBy, View};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Sparkline};
 use ratatui::Frame;
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -17,7 +17,8 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     draw_tab_bar(f, app, chunks[0]);
     match app.view {
-        View::Tasks => draw_tasks(f, app, chunks[1]),
+        View::Summary => draw_summary(f, app, chunks[1]),
+        View::Cpu => draw_cpu(f, app, chunks[1]),
         View::Processes => draw_processes(f, app, chunks[1]),
     }
     draw_help(f, app, chunks[2]);
@@ -25,7 +26,14 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
-    let tasks_style = if app.view == View::Tasks {
+    let summary_style = if app.view == View::Summary {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    let cpu_style = if app.view == View::Cpu {
         Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD)
@@ -41,37 +49,214 @@ fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let items = [
-        ListItem::new(" 1 Tasks ").style(tasks_style),
-        ListItem::new(" 2 Processes ").style(proc_style),
+        ListItem::new(" 1 Summary ").style(summary_style),
+        ListItem::new(" 2 CPU ").style(cpu_style),
+        ListItem::new(" 3 Processes ").style(proc_style),
     ];
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title("taskman"));
     f.render_widget(list, area);
 }
 
-fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app
-        .data
-        .tasks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            let marker = if t.completed { "[x]" } else { "[ ]" };
-            let selected = i == app.task_selected;
-            let style = if selected {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD)
-            } else if t.completed {
-                Style::default().fg(Color::Green)
-            } else {
-                Style::default()
-            };
-            ListItem::new(format!("{} {}", marker, t.title)).style(style)
-        })
-        .collect();
+fn draw_summary(f: &mut Frame, app: &App, area: Rect) {
+    let s = &app.stats;
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Tasks"));
-    f.render_widget(list, area);
+    let cpu_gauge = Gauge::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("CPU  {:.1}%", s.cpu_percent)),
+        )
+        .gauge_style(Style::default().fg(Color::Green))
+        .ratio((s.cpu_percent / 100.0) as f64);
+
+    let mem_gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "MEM  {:.1}%  ({} / {} MB)",
+            s.mem_percent(),
+            s.mem_used / 1_048_576,
+            s.mem_total / 1_048_576
+        )))
+        .gauge_style(Style::default().fg(Color::Cyan))
+        .ratio((s.mem_percent() / 100.0) as f64);
+
+    let swap_gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "SWAP {:.1}%  ({} / {} MB)",
+            s.swap_percent(),
+            s.swap_used / 1_048_576,
+            s.swap_total / 1_048_576
+        )))
+        .gauge_style(Style::default().fg(Color::Yellow))
+        .ratio((s.swap_percent() / 100.0) as f64);
+
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+        ])
+        .split(area);
+
+    f.render_widget(cpu_gauge, top_chunks[0]);
+    f.render_widget(mem_gauge, top_chunks[1]);
+    f.render_widget(swap_gauge, top_chunks[2]);
+
+    // Info block below gauges.
+    let info = [
+        format!("Load avg:        {}", s.format_load()),
+        format!("Processes:       {}", s.process_count),
+        format!("Uptime:          {}", s.format_uptime()),
+        format!(
+            "Tasks: {} ({} done)",
+            app.data.tasks.len(),
+            app.data.tasks.iter().filter(|t| t.completed).count()
+        ),
+        "Version:         v0.4.0".to_string(),
+    ];
+    let info_text = info.join("\n");
+    let info_block =
+        Paragraph::new(info_text).block(Block::default().borders(Borders::ALL).title("System"));
+    let info_area = Rect {
+        x: area.x,
+        y: area.y + 6,
+        width: area.width,
+        height: area.height.saturating_sub(6),
+    };
+    f.render_widget(info_block, info_area);
+}
+
+fn draw_cpu(f: &mut Frame, app: &App, area: Rect) {
+    let s = &app.stats;
+
+    // Overall CPU sparkline.
+    let cpu_data: Vec<u64> = s.cpu_history.iter().map(|v| *v as u64).collect();
+    let cpu_spark = Sparkline::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Overall CPU  {:.1}%", s.cpu_percent)),
+        )
+        .data(&cpu_data)
+        .style(Style::default().fg(Color::Green));
+
+    // Per-core sparklines.
+    let core_count = s.cpu_per_core.len();
+    let mut core_chunks: Vec<Rect> = Vec::new();
+    if core_count <= 4 {
+        core_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(
+                (0..core_count)
+                    .map(|_| Constraint::Length(3))
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .split(area)
+            .to_vec();
+    } else {
+        let half = core_count.div_ceil(2);
+        let left: Vec<Rect> = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(
+                (0..half)
+                    .map(|_| Constraint::Length(3))
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .split(area)
+            .to_vec();
+        let right: Vec<Rect> = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(
+                (half..core_count)
+                    .map(|_| Constraint::Length(3))
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .split(area)
+            .to_vec();
+        core_chunks.extend(left);
+        core_chunks.extend(right);
+    }
+
+    let top_height = 6;
+    let cpu_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: top_height,
+    };
+    let cores_area = Rect {
+        x: area.x,
+        y: area.y + top_height,
+        width: area.width,
+        height: area.height.saturating_sub(top_height),
+    };
+
+    f.render_widget(cpu_spark, cpu_area);
+
+    // Render per-core sparklines in a grid.
+    if core_count <= 4 {
+        for (i, core_area) in core_chunks.iter().enumerate() {
+            if i < s.cpu_per_core.len() {
+                let usage = s.cpu_per_core[i];
+                let data: Vec<u64> = s.per_core_history[i].iter().map(|v| *v as u64).collect();
+                let spark = Sparkline::default()
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!("CPU {}  {:.1}%", i, usage)),
+                    )
+                    .data(&data)
+                    .style(Style::default().fg(Color::Cyan));
+                f.render_widget(spark, *core_area);
+            }
+        }
+    } else {
+        // Two columns.
+        let half = core_count.div_ceil(2);
+        let mid = cores_area.width / 2;
+        for (i, core_area) in core_chunks.iter().enumerate() {
+            if i < s.cpu_per_core.len() {
+                let usage = s.cpu_per_core[i];
+                let data: Vec<u64> = s.per_core_history[i].iter().map(|v| *v as u64).collect();
+                let spark = Sparkline::default()
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!("CPU {}  {:.1}%", i, usage)),
+                    )
+                    .data(&data)
+                    .style(Style::default().fg(Color::Cyan));
+                // Adjust x for right column.
+                let adjusted = if i >= half {
+                    Rect {
+                        x: cores_area.x + mid,
+                        y: core_area.y,
+                        width: cores_area.width - mid,
+                        height: core_area.height,
+                    }
+                } else {
+                    *core_area
+                };
+                f.render_widget(spark, adjusted);
+            }
+        }
+    }
+
+    // Legend.
+    let legend = Paragraph::new("1 Summary  2 CPU  3 Processes  j/k: navigate (Processes)  x: kill  s: sort  r: refresh  q: quit")
+        .block(Block::default().borders(Borders::NONE));
+    f.render_widget(
+        legend,
+        Rect {
+            x: area.x,
+            y: area.y + area.height.saturating_sub(2),
+            width: area.width,
+            height: 1,
+        },
+    );
 }
 
 fn draw_processes(f: &mut Frame, app: &App, area: Rect) {
@@ -81,8 +266,6 @@ fn draw_processes(f: &mut Frame, app: &App, area: Rect) {
         .filter(|p| p.group == crate::model::ProcessGroup::Application)
         .count();
 
-    // Build a single list with group headers inserted on group transition.
-    // proc_to_display maps process index (in app.processes) -> display index.
     let mut items: Vec<ListItem> = Vec::new();
     let mut proc_to_display: Vec<usize> = Vec::with_capacity(app.processes.len());
 
@@ -133,7 +316,6 @@ fn draw_processes(f: &mut Frame, app: &App, area: Rect) {
     f.render_stateful_widget(list, area, &mut state);
 }
 
-/// Count processes of a given group.
 fn section_count(app: &App, group: crate::model::ProcessGroup) -> usize {
     app.processes.iter().filter(|p| p.group == group).count()
 }
@@ -169,12 +351,13 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         format!("> {}  (Enter: add, Esc: cancel)", app.input)
     } else {
         match app.view {
-            View::Tasks => {
-                "j/k: navigate  a: add  c/Enter: complete  d/x: delete  1/2/Tab: view  q: quit"
+            View::Summary => {
+                "j/k: navigate  a: add  c/Enter: complete  d/x: delete  1/2/3: view  q: quit"
                     .to_string()
             }
+            View::Cpu => "j/k: navigate  1/2/3: view  r: refresh  q: quit".to_string(),
             View::Processes => {
-                "j/k: navigate  x: kill  s: sort  r: refresh  1/2/Tab: view  q: quit".to_string()
+                "j/k: navigate  x: kill  s: sort  r: refresh  1/2/3: view  q: quit".to_string()
             }
         }
     };
@@ -184,15 +367,25 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let text = match app.view {
-        View::Tasks => format!(
-            "Tasks: {} ({} done)  |  v0.3.0  |  {}",
+        View::Summary => format!(
+            "Tasks: {} ({} done)  |  CPU {:.1}%  |  MEM {:.1}%  |  v0.4.0  |  {}",
             app.data.tasks.len(),
             app.data.tasks.iter().filter(|t| t.completed).count(),
+            app.stats.cpu_percent,
+            app.stats.mem_percent(),
+            app.status
+        ),
+        View::Cpu => format!(
+            "CPU {:.1}%  |  {} cores  |  v0.4.0  |  {}",
+            app.stats.cpu_percent,
+            app.stats.cpu_per_core.len(),
             app.status
         ),
         View::Processes => format!(
-            "Processes: {}  |  v0.3.0  |  {}",
+            "Processes: {}  |  CPU {:.1}%  |  MEM {:.1}%  |  v0.4.0  |  {}",
             app.processes.len(),
+            app.stats.cpu_percent,
+            app.stats.mem_percent(),
             app.status
         ),
     };

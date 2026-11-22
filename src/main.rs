@@ -72,7 +72,6 @@ fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::app::View;
     use crossterm::event::Event;
     use std::time::Duration;
 
@@ -89,9 +88,8 @@ fn run_app(
                 }
             }
         } else {
-            if app.view == View::Processes {
-                app.refresh_processes()?;
-            }
+            // Timer tick: refresh system stats and processes (no input pending).
+            app.refresh_all()?;
         }
     }
 

@@ -11,17 +11,28 @@ allocation accounted for, skip work the user can't see).
 
 ## Features
 
-- **Task list**: add, complete, delete to-do items (persisted to JSON)
-- **Process monitor**: list processes with PID, name, CPU%, memory, status
-- **Process grouping**: Applications vs Background sections (like TMOG) — user
-  sessions such as `ai.opencode` stand out from kernel threads and daemons
-- **Command-line visibility**: each process shows its cmdline, so you can tell
-  which process is your opencode session vs a system daemon
-- **● / ○ markers**: ● = Application, ○ = Background, on every row
-- **Sort**: cycle between CPU / memory / name sorting
-- **Kill**: terminate a selected process
-- **History capture**: rolling snapshots of process stats (last 60 samples)
-- **Keyboard-driven**: `j`/`k` navigate, `1`/`2`/`Tab` switch views, `q` quits
+- **Summary** (default): CPU, MEM, SWAP gauges, load avg, uptime, task counts — like TMOG's Performance view
+- **CPU**: overall CPU sparkline + per-core utilization sparklines (CSP per-core)
+- **Processes**: grouped Applications/Background list with cmdlines, sorting
+- **Task list**: add, complete, delete (on Summary view)
+- **Process grouping**: Applications vs Background sections — user sessions like `ai.opencode` are identifiable
+- **● / ○ markers**: ● = Application, ○ = Background, on every process row
+- **Keyboard-driven**: `j`/`k` navigate, `1`/`2`/`3` switch views, `q` quits
+
+## Keys
+
+| Key | Action |
+|-----|--------|
+| `1` / `2` / `3` | Switch Summary / CPU / Processes |
+| `Tab` | Cycle views |
+| `j` / `Up` | Move selection up |
+| `k` / `Down` | Move selection down |
+| `a` | Start adding a task (Enter to confirm, Esc to cancel) |
+| `c` / `Enter` | Complete / reopen selected task (Summary) |
+| `d` / `x` | Delete task (Summary) / kill process (Processes) |
+| `s` | Cycle process sort (CPU → MEM → NAME) |
+| `r` | Refresh system stats |
+| `q` | Quit |
 
 ## Build & run
 
